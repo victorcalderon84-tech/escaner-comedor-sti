@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Escáner de Comedor - STI</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root {
+      --azul: #1e5aa8;
+      --azul-oscuro: #123c73;
+      --verde: #2e9e5b;
+      --verde-oscuro: #1f7a44;
+      --rojo: #c0392b;
+      --gris: #6b7280;
+      --gris-claro: #f2f4f7;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: #0f172a;
+      font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+      color: #1f2937;
+    }
+    .contenedor {
+      max-width: 480px;
+      margin: 0 auto;
+      min-height: 100vh;
+      background: #ffffff;
+      padding: 16px;
+    }
+    .encabezado { text-align: center; padding: 10px 0 16px 0; }
+    .encabezado h1 { font-size: 18px; color: var(--azul-oscuro); margin: 0 0 4px 0; }
+    .badge-comedor {
+      display: inline-block; padding: 5px 14px; border-radius: 20px;
+      font-size: 13px; font-weight: 700; color: white; margin-top: 6px;
+    }
+    .badge-comedor.antracita { background: var(--azul); }
+    .badge-comedor.externo { background: var(--verde); }
+
+    .tarjeta { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; margin-bottom: 14px; }
+
+    select, input[type="text"] {
+      width: 100%; padding: 12px; font-size: 15px; border: 1px solid #d1d5db; border-radius: 10px; margin-bottom: 10px;
+    }
+
+    .opciones { display: flex; gap: 10px; margin-bottom: 10px; }
+    .opcion {
+      flex: 1; text-align: center; padding: 14px 6px; border: 2px solid #e5e7eb;
+      border-radius: 12px; cursor: pointer; font-weight: 700; font-size: 14px; color: #374151;
+    }
+    .opcion.activo { border-color: var(--verde); background: #eafaf0; color: var(--verde-oscuro); }
+
+    .btn-grande {
+      width: 100%; padding: 15px; font-size: 16px; font-weight: 700;
+      border: none; border-radius: 12px; background: var(--azul); color: white; cursor: pointer;
+    }
+    .btn-grande:disabled { background: #b7c3d0; }
+
+    #lector { width: 100%; border-radius: 12px; overflow: hidden; }
+
+    .contador {
+      text-align: center; background: var(--gris-claro); border-radius: 10px; padding: 10px;
+      font-size: 15px; font-weight: 700; color: var(--azul-oscuro); margin-bottom: 12px;
+    }
+
+    .resultado {
+      border-radius: 12px; padding: 16px; text-align: center; font-weight: 700;
+      margin-bottom: 12px; font-size: 15px;
+    }
+    .resultado.ok { background: #eafaf0; color: var(--verde-oscuro); border: 2px solid var(--verde); }
+    .resultado.error { background: #fdecea; color: var(--rojo); border: 2px solid var(--rojo); }
+
+    .oculto { display: none !important; }
+    .pie { text-align: center; margin-top: 16px; font-size: 11px; color: #b0b7c1; }
+    .btn-cambiar {
+      display: block; text-align: center; margin-top: 10px; font-size: 13px;
+      color: var(--azul); text-decoration: underline; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div class="contenedor">
+  <div class="encabezado">
+    <h1>ESCÁNER DE COMEDOR</h1>
+    <div id="badgeComedor" class="badge-comedor"></div>
+  </div>
+
+  <div id="pasoComedor" class="tarjeta oculto">
+    <p style="font-weight:600; margin-top:0;">Seleccione el comedor:</p>
+    <div class="opciones">
+      <div class="opcion" onclick="elegirComedor('ANTRACITA')">ANTRACITA</div>
+      <div class="opcion" onclick="elegirComedor('EXTERNO')">EXTERNO</div>
+    </div>
+  </div>
+
+  <div id="pasoClave" class="tarjeta oculto">
+    <p style="font-weight:600; margin-top:0;">Ingrese la clave de acceso de este comedor:</p>
+    <input type="text" id="inputClave" placeholder="Clave de acceso">
+    <button class="btn-grande" onclick="validarClave()">Ingresar</button>
+    <div id="mensajeClave" style="color:var(--rojo); font-size:13px; margin-top:8px; text-align:center;"></div>
+  </div>
+
+  <div id="pasoTipo" class="tarjeta oculto">
+    <p style="font-weight:600; margin-top:0;">¿Qué se está sirviendo?</p>
+    <div class="opciones">
+      <div class="opcion" id="opAlmuerzo" onclick="elegirTipo('ALMUERZO')">ALMUERZO</div>
+      <div class="opcion" id="opCena" onclick="elegirTipo('CENA')">CENA</div>
+    </div>
+  </div>
+
+  <div id="pasoEscaner" class="oculto">
+    <div class="contador" id="contadorServidos">0 servidos</div>
+    <div id="resultadoEscaneo" class="oculto"></div>
+    <div class="tarjeta" style="padding:8px;">
+      <div id="lector"></div>
+    </div>
+    <div class="btn-cambiar" onclick="reiniciarFlujo()">Cambiar tipo de servicio / comedor</div>
+  </div>
+
+  <div class="pie">Elaborado por VCA</div>
+</div>
+
+<script>
+  // ⚠️ IMPORTANTE: reemplaza esta URL por tu enlace /exec real de Apps Script.
+  const URL_APPS_SCRIPT = 'https://script.google.com/macros/s/AKfycbzYHyShOC3uewrN9Ov0jZXtOomOEkoGfLun0bxtUdTo8HRSj506Fy1XMks6mVpqlOjU/exec';
+
+  const parametrosUrl = new URLSearchParams(window.location.search);
+  let comedorActual = (parametrosUrl.get('comedor') || '').toUpperCase();
+  let claveActual = '';
+  let tipoActual = '';
+  let contadorServidos = 0;
+  let escanerActivo = null;
+  let procesandoEscaneo = false;
+
+  function iniciar() {
+    if (comedorActual === 'ANTRACITA' || comedorActual === 'EXTERNO') {
+      mostrarBadge();
+      irAPasoClave();
+    } else {
+      document.getElementById('pasoComedor').classList.remove('oculto');
+    }
+  }
+
+  function mostrarBadge() {
+    const badge = document.getElementById('badgeComedor');
+    badge.textContent = 'COMEDOR ' + comedorActual;
+    badge.className = 'badge-comedor ' + (comedorActual === 'ANTRACITA' ? 'antracita' : 'externo');
+  }
+
+  function elegirComedor(comedor) {
+    comedorActual = comedor;
+    mostrarBadge();
+    document.getElementById('pasoComedor').classList.add('oculto');
+    irAPasoClave();
+  }
+
+  function irAPasoClave() {
+    document.getElementById('pasoClave').classList.remove('oculto');
+  }
+
+  function llamarApi(params) {
+    const url = URL_APPS_SCRIPT + '?api=1&' + new URLSearchParams(params).toString();
+    return fetch(url).then(function (resp) { return resp.json(); });
+  }
+
+  function validarClave() {
+    const clave = document.getElementById('inputClave').value.trim();
+    const msj = document.getElementById('mensajeClave');
+    if (!clave) { msj.textContent = 'Ingrese una clave.'; return; }
+    msj.style.color = 'var(--gris)';
+    msj.textContent = 'Verificando...';
+    llamarApi({ accion: 'validarClave', comedor: comedorActual, clave: clave })
+      .then(function (resultado) {
+        if (resultado.success) {
+          claveActual = clave;
+          msj.textContent = '';
+          document.getElementById('pasoClave').classList.add('oculto');
+          document.getElementById('pasoTipo').classList.remove('oculto');
+        } else {
+          msj.style.color = 'var(--rojo)';
+          msj.textContent = resultado.mensaje;
+        }
+      })
+      .catch(function () {
+        msj.style.color = 'var(--rojo)';
+        msj.textContent = 'Error de conexión. Verifique su internet e intente de nuevo.';
+      });
+  }
+
+  function elegirTipo(tipo) {
+    tipoActual = tipo;
+    document.getElementById('opAlmuerzo').classList.toggle('activo', tipo === 'ALMUERZO');
+    document.getElementById('opCena').classList.toggle('activo', tipo === 'CENA');
+    document.getElementById('pasoTipo').classList.add('oculto');
+    document.getElementById('pasoEscaner').classList.remove('oculto');
+    contadorServidos = 0;
+    actualizarContador();
+    iniciarCamara();
+  }
+
+  function actualizarContador() {
+    document.getElementById('contadorServidos').textContent =
+      contadorServidos + ' servido(s) — ' + tipoActual + ' — COMEDOR ' + comedorActual;
+  }
+
+  function iniciarCamara() {
+    document.getElementById('lector').innerHTML = '<p style="text-align:center; padding:20px; color:var(--gris);">Solicitando acceso a la cámara...</p>';
+
+    Html5Qrcode.getCameras()
+      .then(function (camaras) {
+        if (!camaras || camaras.length === 0) {
+          mostrarErrorCamara({ name: 'SinCamaras', message: 'No se detectó ninguna cámara disponible en este dispositivo.' });
+          return;
+        }
+        document.getElementById('lector').innerHTML = '';
+        escanerActivo = new Html5Qrcode('lector');
+
+        const camaraTrasera = camaras.find(function (c) {
+          return /back|trasera|rear|environment/i.test(c.label);
+        });
+        const idCamara = camaraTrasera ? camaraTrasera.id : camaras[camaras.length - 1].id;
+
+        const config = { fps: 10, qrbox: 240 };
+
+        escanerActivo.start(idCamara, config, onEscaneoExitoso)
+          .catch(function (err) {
+            escanerActivo.start({ facingMode: 'environment' }, config, onEscaneoExitoso)
+              .catch(function (err2) { mostrarErrorCamara(err2); });
+          });
+      })
+      .catch(function (err) {
+        mostrarErrorCamara(err);
+      });
+  }
+
+  function mostrarErrorCamara(err) {
+    const nombre = (err && err.name) || 'Desconocido';
+    const mensaje = (err && err.message) || String(err);
+    const constraint = (err && err.constraint) ? ('<br>Restricción: ' + err.constraint) : '';
+    document.getElementById('lector').innerHTML =
+      '<div style="padding:16px; text-align:left; font-size:13px; color:var(--rojo); background:#fdecea; border-radius:10px;">' +
+      '<b>No se pudo acceder a la cámara.</b><br><br>' +
+      'Tipo de error: ' + nombre + '<br>' +
+      'Mensaje: ' + mensaje + constraint +
+      '<br><br><button class="btn-grande" style="padding:10px; font-size:13px;" onclick="iniciarCamara()">Reintentar</button>' +
+      '</div>';
+  }
+
+  function onEscaneoExitoso(textoDecodificado) {
+    if (procesandoEscaneo) return;
+    procesandoEscaneo = true;
+
+    llamarApi({ accion: 'escanear', uuid: textoDecodificado, comedor: comedorActual, tipo: tipoActual, clave: claveActual })
+      .then(function (resultado) {
+        mostrarResultado(resultado);
+        procesandoEscaneo = false;
+      })
+      .catch(function () {
+        mostrarResultado({ success: false, mensaje: 'Error de conexión. Verifique su internet e intente de nuevo.' });
+        procesandoEscaneo = false;
+      });
+  }
+
+  function mostrarResultado(resultado) {
+    const cont = document.getElementById('resultadoEscaneo');
+    cont.classList.remove('oculto');
+    if (resultado.success) {
+      contadorServidos++;
+      actualizarContador();
+      cont.className = 'resultado ok';
+      cont.textContent = '✔ ' + resultado.nombre + ' — servido correctamente';
+      if (navigator.vibrate) navigator.vibrate(120);
+    } else {
+      cont.className = 'resultado error';
+      cont.textContent = '✘ ' + resultado.mensaje;
+      if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+    }
+    setTimeout(function () { cont.classList.add('oculto'); }, 3000);
+  }
+
+  function reiniciarFlujo() {
+    if (escanerActivo) { escanerActivo.stop().catch(function () {}); }
+    document.getElementById('pasoEscaner').classList.add('oculto');
+    document.getElementById('pasoTipo').classList.remove('oculto');
+  }
+
+  iniciar();
+</script>
+
+</body>
+</html>
