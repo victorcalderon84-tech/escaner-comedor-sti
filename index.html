@@ -263,9 +263,51 @@
       });
   }
 
+  function reproducirSonido(exito) {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+
+      if (exito) {
+        // Sonido corto y agudo (una sola nota) para VALIDADO
+        osc.frequency.setValueAtTime(1046, ctx.currentTime); // Do agudo
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.18);
+      } else {
+        // Dos tonos graves y cortos (buzz doble) para RECHAZADO
+        osc.frequency.setValueAtTime(220, ctx.currentTime);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.15);
+
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(220, ctx.currentTime + 0.22);
+        gain2.gain.setValueAtTime(0.25, ctx.currentTime + 0.22);
+        gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.37);
+        osc2.start(ctx.currentTime + 0.22);
+        osc2.stop(ctx.currentTime + 0.37);
+      }
+    } catch (e) {
+      // Si el navegador bloquea el audio (por ejemplo, antes de una interacción del usuario), se ignora
+      // silenciosamente y el sistema sigue funcionando normalmente solo con la vibración y el texto en pantalla.
+    }
+  }
+
   function mostrarResultado(resultado) {
     const cont = document.getElementById('resultadoEscaneo');
     cont.classList.remove('oculto');
+    reproducirSonido(resultado.success);
     if (resultado.success) {
       contadorServidos++;
       actualizarContador();
