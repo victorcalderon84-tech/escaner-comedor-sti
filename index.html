@@ -247,8 +247,12 @@
         const config = {
           fps: 15,
           qrbox: 220,
+          useBarCodeDetectorIfSupported: true, // usa el lector nativo del sistema cuando esté disponible (Android/Chrome); en iPhone/Safari, cae automáticamente al método normal sin ningún cambio para el usuario.
+          formatsToSupport: (typeof Html5QrcodeSupportedFormats !== 'undefined') ? [Html5QrcodeSupportedFormats.QR_CODE] : undefined, // deja de revisar otros formatos de código en cada fotograma, acelera la detección en todos los dispositivos.
           videoConstraints: {
             facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }, // resolución más liviana: menos datos por fotograma para analizar, sin perder nitidez suficiente para leer el QR.
             advanced: [{ focusMode: 'continuous' }]
           }
         };
