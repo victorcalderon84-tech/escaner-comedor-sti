@@ -131,6 +131,7 @@
   <div id="pasoEscaner" class="oculto">
     <div class="contador" id="contadorServidos">0 servidos</div>
     <div id="resultadoEscaneo" class="oculto"></div>
+    <div id="debugTiempos" style="text-align:center; font-size:12px; color:var(--gris); margin-bottom:8px;"></div>
     <div class="tarjeta" style="padding:8px;">
       <div class="contenedor-lector">
         <div id="lector"></div>
@@ -154,6 +155,7 @@
   let contadorServidos = 0;
   let escanerActivo = null;
   let procesandoEscaneo = false;
+  let tListoParaEscanear = null; // marca de tiempo desde que la cámara queda lista para el próximo escaneo (diagnóstico temporal)
 
   function iniciar() {
     if (comedorActual === 'ANTRACITA' || comedorActual === 'EXTERNO') {
@@ -258,8 +260,10 @@
         };
 
         escanerActivo.start(idCamara, config, onEscaneoExitoso)
+          .then(function () { tListoParaEscanear = performance.now(); })
           .catch(function (err) {
             escanerActivo.start({ facingMode: 'environment' }, config, onEscaneoExitoso)
+              .then(function () { tListoParaEscanear = performance.now(); })
               .catch(function (err2) { mostrarErrorCamara(err2); });
           });
       })
@@ -286,16 +290,34 @@
     if (procesandoEscaneo) return;
     procesandoEscaneo = true;
 
+    // --- DIAGNÓSTICO TEMPORAL DE TIEMPOS (quitar cuando ya no se necesite) ---
+    const tDeteccion = tListoParaEscanear ? (performance.now() - tListoParaEscanear) : null;
+    const tInicioServidor = performance.now();
+
     llamarApi({ accion: 'escanear', uuid: textoDecodificado, comedor: comedorActual, tipo: tipoActual, clave: claveActual })
       .then(function (resultado) {
+        const tServidor = performance.now() - tInicioServidor;
+        mostrarTiemposDebug(tDeteccion, tServidor);
         const duracion = mostrarResultado(resultado);
         // Pausa breve la lectura de nuevos QR hasta que el sonido termine de escucharse completo.
-        setTimeout(function () { procesandoEscaneo = false; }, duracion);
+        setTimeout(function () { procesandoEscaneo = false; tListoParaEscanear = performance.now(); }, duracion);
       })
       .catch(function () {
+        const tServidor = performance.now() - tInicioServidor;
+        mostrarTiemposDebug(tDeteccion, tServidor);
         const duracion = mostrarResultado({ success: false, mensaje: 'Error de conexión. Verifique su internet e intente de nuevo.' });
-        setTimeout(function () { procesandoEscaneo = false; }, duracion);
+        setTimeout(function () { procesandoEscaneo = false; tListoParaEscanear = performance.now(); }, duracion);
       });
+  }
+
+  // DIAGNÓSTICO TEMPORAL: muestra cuánto tardó la detección del QR (desde que la cámara quedó lista)
+  // y cuánto tardó la respuesta del servidor, para identificar dónde está realmente la demora.
+  function mostrarTiemposDebug(tDeteccion, tServidor) {
+    const el = document.getElementById('debugTiempos');
+    const detTexto = tDeteccion !== null ? (tDeteccion / 1000).toFixed(2) + 's' : '—';
+    const servTexto = (tServidor / 1000).toFixed(2) + 's';
+    const totalTexto = tDeteccion !== null ? ((tDeteccion + tServidor) / 1000).toFixed(2) + 's' : servTexto;
+    el.textContent = '⏱ Detección: ' + detTexto + '  |  Servidor: ' + servTexto + '  |  Total: ' + totalTexto;
   }
 
   // Devuelve la duración del sonido en milisegundos, para poder pausar el escaneo mientras suena.
@@ -372,6 +394,7 @@
 
   function reiniciarFlujo() {
     if (escanerActivo) { escanerActivo.stop().catch(function () {}); }
+    tListoParaEscanear = null;
     document.getElementById('barraEscaneo').style.display = 'none';
     document.getElementById('pasoEscaner').classList.add('oculto');
     document.getElementById('pasoTipo').classList.remove('oculto');
