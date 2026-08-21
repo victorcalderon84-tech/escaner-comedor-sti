@@ -156,6 +156,19 @@
   let escanerActivo = null;
   let procesandoEscaneo = false;
   let tListoParaEscanear = null; // marca de tiempo desde que la cámara queda lista para el próximo escaneo (diagnóstico temporal)
+  let audioCtxCompartido = null; // una sola conexión de audio reutilizada en todos los pitidos, para no agotar el límite del navegador
+  const PAUSA_MS_OK = 700;    // pausa fija tras un escaneo válido, independiente de si el sonido suena o no
+  const PAUSA_MS_ERROR = 1500; // pausa fija tras un escaneo rechazado, independiente de si el sonido suena o no
+
+  function obtenerAudioCtx_() {
+    if (!audioCtxCompartido) {
+      audioCtxCompartido = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtxCompartido.state === 'suspended') {
+      audioCtxCompartido.resume();
+    }
+    return audioCtxCompartido;
+  }
 
   function iniciar() {
     if (comedorActual === 'ANTRACITA' || comedorActual === 'EXTERNO') {
@@ -298,15 +311,17 @@
       .then(function (resultado) {
         const tServidor = performance.now() - tInicioServidor;
         mostrarTiemposDebug(tDeteccion, tServidor);
-        const duracion = mostrarResultado(resultado);
-        // Pausa breve la lectura de nuevos QR hasta que el sonido termine de escucharse completo.
-        setTimeout(function () { procesandoEscaneo = false; tListoParaEscanear = performance.now(); }, duracion);
+        mostrarResultado(resultado);
+        // Pausa fija e independiente del sonido: aunque el audio fallara por cualquier motivo,
+        // el control de "no aceptar el mismo QR dos veces seguidas" sigue funcionando igual.
+        const pausa = resultado.success ? PAUSA_MS_OK : PAUSA_MS_ERROR;
+        setTimeout(function () { procesandoEscaneo = false; tListoParaEscanear = performance.now(); }, pausa);
       })
       .catch(function () {
         const tServidor = performance.now() - tInicioServidor;
         mostrarTiemposDebug(tDeteccion, tServidor);
-        const duracion = mostrarResultado({ success: false, mensaje: 'Error de conexión. Verifique su internet e intente de nuevo.' });
-        setTimeout(function () { procesandoEscaneo = false; tListoParaEscanear = performance.now(); }, duracion);
+        mostrarResultado({ success: false, mensaje: 'Error de conexión. Verifique su internet e intente de nuevo.' });
+        setTimeout(function () { procesandoEscaneo = false; tListoParaEscanear = performance.now(); }, PAUSA_MS_ERROR);
       });
   }
 
@@ -323,7 +338,7 @@
   // Devuelve la duración del sonido en milisegundos, para poder pausar el escaneo mientras suena.
   function reproducirSonido(exito) {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = obtenerAudioCtx_();
 
       if (exito) {
         // BIP-BIP: dos pulsos cortos y agudos, tipo lector de código de barras
