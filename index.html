@@ -233,6 +233,7 @@
     document.getElementById('pasoEscaner').classList.remove('oculto');
     contadorServidos = 0;
     actualizarContador();
+    obtenerAudioCtx_(); // crea/despierta el audio aquí mismo, dentro del toque directo del usuario (requisito del navegador)
     iniciarCamara();
   }
 
