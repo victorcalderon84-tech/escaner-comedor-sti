@@ -156,18 +156,35 @@
   let escanerActivo = null;
   let procesandoEscaneo = false;
   let tListoParaEscanear = null; // marca de tiempo desde que la cámara queda lista para el próximo escaneo (diagnóstico temporal)
-  let audioCtxCompartido = null; // una sola conexión de audio reutilizada en todos los pitidos, para no agotar el límite del navegador
+  let audioCtxCompartido = null;
+  let audioListo = false; // confirma que el desbloqueo de audio ya se completó de verdad (necesario en Chrome/Android)
   const PAUSA_MS_OK = 700;    // pausa fija tras un escaneo válido, independiente de si el sonido suena o no
-  const PAUSA_MS_ERROR = 1500; // pausa fija tras un escaneo rechazado, independiente de si el sonido suena o no
+  const PAUSA_MS_ERROR = 1000; // pausa fija tras un escaneo rechazado, independiente de si el sonido suena o no
 
-  function obtenerAudioCtx_() {
-    if (!audioCtxCompartido) {
-      audioCtxCompartido = new (window.AudioContext || window.webkitAudioContext)();
+  // Se llama SOLO desde el toque directo del botón ALMUERZO/CENA (requisito de Android para autorizar audio).
+  function desbloquearAudio_() {
+    try {
+      if (!audioCtxCompartido) {
+        audioCtxCompartido = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const ctx = audioCtxCompartido;
+
+      // Truco de desbloqueo: reproducir un sonido silencioso real (no solo "resume"), más confiable en Android.
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const fuente = ctx.createBufferSource();
+      fuente.buffer = buffer;
+      fuente.connect(ctx.destination);
+      fuente.start(0);
+
+      const continuar = function () { audioListo = true; };
+      if (ctx.state === 'suspended') {
+        ctx.resume().then(continuar).catch(continuar);
+      } else {
+        continuar();
+      }
+    } catch (e) {
+      audioListo = false; // si falla, el sistema sigue funcionando con vibración y mensaje en pantalla como respaldo
     }
-    if (audioCtxCompartido.state === 'suspended') {
-      audioCtxCompartido.resume();
-    }
-    return audioCtxCompartido;
   }
 
   function iniciar() {
@@ -233,7 +250,7 @@
     document.getElementById('pasoEscaner').classList.remove('oculto');
     contadorServidos = 0;
     actualizarContador();
-    obtenerAudioCtx_(); // crea/despierta el audio aquí mismo, dentro del toque directo del usuario (requisito del navegador)
+    desbloquearAudio_(); // desbloquea el audio aquí mismo, dentro del toque directo del usuario (requisito de Android)
     iniciarCamara();
   }
 
@@ -253,7 +270,18 @@
         }
         document.getElementById('lector').innerHTML = '';
         document.getElementById('barraEscaneo').style.display = 'block';
-        escanerActivo = new Html5Qrcode('lector');
+
+        // Fase 1 de optimización: formatsToSupport / useBarCodeDetectorIfSupported se pasan
+        // en el constructor de Html5Qrcode (no en start()), con respaldo seguro si algo fallara.
+        const opcionesLector = { useBarCodeDetectorIfSupported: true };
+        if (typeof Html5QrcodeSupportedFormats !== 'undefined') {
+          opcionesLector.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+        }
+        try {
+          escanerActivo = new Html5Qrcode('lector', opcionesLector);
+        } catch (e) {
+          escanerActivo = new Html5Qrcode('lector'); // respaldo: si el constructor con opciones fallara, usar el modo estándar
+        }
 
         const camaraTrasera = camaras.find(function (c) {
           return /back|trasera|rear|environment/i.test(c.label);
@@ -263,8 +291,6 @@
         const config = {
           fps: 15,
           qrbox: 220,
-          useBarCodeDetectorIfSupported: true, // usa el lector nativo del sistema cuando esté disponible (Android/Chrome); en iPhone/Safari, cae automáticamente al método normal sin ningún cambio para el usuario.
-          formatsToSupport: (typeof Html5QrcodeSupportedFormats !== 'undefined') ? [Html5QrcodeSupportedFormats.QR_CODE] : undefined, // deja de revisar otros formatos de código en cada fotograma, acelera la detección en todos los dispositivos.
           videoConstraints: {
             facingMode: 'environment',
             width: { ideal: 1280 },
@@ -311,7 +337,7 @@
     llamarApi({ accion: 'escanear', uuid: textoDecodificado, comedor: comedorActual, tipo: tipoActual, clave: claveActual })
       .then(function (resultado) {
         const tServidor = performance.now() - tInicioServidor;
-        mostrarTiemposDebug(tDeteccion, tServidor);
+        mostrarTiemposDebug(tDeteccion, tServidor, resultado.debug);
         mostrarResultado(resultado);
         // Pausa fija e independiente del sonido: aunque el audio fallara por cualquier motivo,
         // el control de "no aceptar el mismo QR dos veces seguidas" sigue funcionando igual.
@@ -328,18 +354,25 @@
 
   // DIAGNÓSTICO TEMPORAL: muestra cuánto tardó la detección del QR (desde que la cámara quedó lista)
   // y cuánto tardó la respuesta del servidor, para identificar dónde está realmente la demora.
-  function mostrarTiemposDebug(tDeteccion, tServidor) {
+  function mostrarTiemposDebug(tDeteccion, tServidor, debugBackend) {
     const el = document.getElementById('debugTiempos');
     const detTexto = tDeteccion !== null ? (tDeteccion / 1000).toFixed(2) + 's' : '—';
     const servTexto = (tServidor / 1000).toFixed(2) + 's';
     const totalTexto = tDeteccion !== null ? ((tDeteccion + tServidor) / 1000).toFixed(2) + 's' : servTexto;
-    el.textContent = '⏱ Detección: ' + detTexto + '  |  Servidor: ' + servTexto + '  |  Total: ' + totalTexto;
+    let texto = '⏱ Detección: ' + detTexto + '  |  Servidor: ' + servTexto + '  |  Total: ' + totalTexto;
+    if (debugBackend) {
+      texto += ' — [clave:' + debugBackend.claveMs + 'ms uuid:' + debugBackend.uuidMs + 'ms trab:' + debugBackend.trabajadorMs +
+        'ms reg:' + debugBackend.registrosMs + 'ms lock:' + debugBackend.esperaLockMs + 'ms serv:' + debugBackend.servidosMs +
+        'ms esc:' + debugBackend.escrituraMs + 'ms | totalBackend:' + debugBackend.totalMs + 'ms]';
+    }
+    el.textContent = texto;
   }
 
   // Devuelve la duración del sonido en milisegundos, para poder pausar el escaneo mientras suena.
   function reproducirSonido(exito) {
+    if (!audioListo || !audioCtxCompartido) return 0; // si el audio no quedó desbloqueado, no se intenta sonar (evita fallos silenciosos)
     try {
-      const ctx = obtenerAudioCtx_();
+      const ctx = audioCtxCompartido;
 
       if (exito) {
         // BIP-BIP: dos pulsos cortos y agudos, tipo lector de código de barras
@@ -361,27 +394,25 @@
         });
         return Math.round((duracionBip * 2 + separacion) * 1000) + 60;
       } else {
-        // Bocina de barco: 3 osciladores graves ligeramente desafinados entre sí (genera un
-        // "batido" áspero, similar a una bocina real) con entrada/salida suaves y leve caída de tono.
-        const duracionTotal = 1.3;
-        const frecuencias = [92, 95, 89];
-        const gainMaestro = ctx.createGain();
-        gainMaestro.connect(ctx.destination);
-        gainMaestro.gain.setValueAtTime(0.0001, ctx.currentTime);
-        gainMaestro.gain.exponentialRampToValueAtTime(0.9, ctx.currentTime + 0.15);
-        gainMaestro.gain.setValueAtTime(0.9, ctx.currentTime + duracionTotal - 0.35);
-        gainMaestro.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duracionTotal);
-
-        frecuencias.forEach(function (freq) {
+        // TON – TON: dos tonos idénticos, graves/medios, tipo campana suave (distinto en tono y
+        // textura al BIP-BIP de aprobación, para diferenciarse sin necesidad de mirar la pantalla).
+        const duracionTon = 0.22;
+        const separacion = 0.2;
+        [0, duracionTon + separacion].forEach(function (offset) {
           const osc = ctx.createOscillator();
-          osc.type = 'sawtooth';
-          osc.frequency.setValueAtTime(freq, ctx.currentTime);
-          osc.frequency.linearRampToValueAtTime(freq - 8, ctx.currentTime + duracionTotal);
-          osc.connect(gainMaestro);
-          osc.start(ctx.currentTime);
-          osc.stop(ctx.currentTime + duracionTotal + 0.05);
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(440, ctx.currentTime + offset);
+          gain.gain.setValueAtTime(0.0001, ctx.currentTime + offset);
+          gain.gain.exponentialRampToValueAtTime(1.0, ctx.currentTime + offset + 0.015);
+          gain.gain.setValueAtTime(1.0, ctx.currentTime + offset + duracionTon - 0.05);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + duracionTon);
+          osc.start(ctx.currentTime + offset);
+          osc.stop(ctx.currentTime + offset + duracionTon + 0.02);
         });
-        return Math.round(duracionTotal * 1000) + 80;
+        return Math.round((duracionTon * 2 + separacion) * 1000) + 60;
       }
     } catch (e) {
       return 0;
