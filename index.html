@@ -284,60 +284,73 @@
 
     llamarApi({ accion: 'escanear', uuid: textoDecodificado, comedor: comedorActual, tipo: tipoActual, clave: claveActual })
       .then(function (resultado) {
-        mostrarResultado(resultado);
-        procesandoEscaneo = false;
+        const duracion = mostrarResultado(resultado);
+        // Pausa breve la lectura de nuevos QR hasta que el sonido termine de escucharse completo.
+        setTimeout(function () { procesandoEscaneo = false; }, duracion);
       })
       .catch(function () {
-        mostrarResultado({ success: false, mensaje: 'Error de conexión. Verifique su internet e intente de nuevo.' });
-        procesandoEscaneo = false;
+        const duracion = mostrarResultado({ success: false, mensaje: 'Error de conexión. Verifique su internet e intente de nuevo.' });
+        setTimeout(function () { procesandoEscaneo = false; }, duracion);
       });
   }
 
+  // Devuelve la duración del sonido en milisegundos, para poder pausar el escaneo mientras suena.
   function reproducirSonido(exito) {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = 'sine';
 
       if (exito) {
-        // Sonido corto y agudo (una sola nota) para VALIDADO
-        osc.frequency.setValueAtTime(1046, ctx.currentTime); // Do agudo
-        gain.gain.setValueAtTime(1.0, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.18);
+        // BIP-BIP: dos pulsos cortos y agudos, tipo lector de código de barras
+        const duracionBip = 0.16;
+        const separacion = 0.09;
+        [0, duracionBip + separacion].forEach(function (offset) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(1500, ctx.currentTime + offset);
+          gain.gain.setValueAtTime(0.0001, ctx.currentTime + offset);
+          gain.gain.exponentialRampToValueAtTime(1.0, ctx.currentTime + offset + 0.01);
+          gain.gain.setValueAtTime(1.0, ctx.currentTime + offset + duracionBip - 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + offset + duracionBip);
+          osc.start(ctx.currentTime + offset);
+          osc.stop(ctx.currentTime + offset + duracionBip + 0.02);
+        });
+        return Math.round((duracionBip * 2 + separacion) * 1000) + 60;
       } else {
-        // Dos tonos graves y cortos (buzz doble) para RECHAZADO
-        osc.frequency.setValueAtTime(220, ctx.currentTime);
-        gain.gain.setValueAtTime(1.0, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.15);
+        // Bocina de barco: 3 osciladores graves ligeramente desafinados entre sí (genera un
+        // "batido" áspero, similar a una bocina real) con entrada/salida suaves y leve caída de tono.
+        const duracionTotal = 1.3;
+        const frecuencias = [92, 95, 89];
+        const gainMaestro = ctx.createGain();
+        gainMaestro.connect(ctx.destination);
+        gainMaestro.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gainMaestro.gain.exponentialRampToValueAtTime(0.9, ctx.currentTime + 0.15);
+        gainMaestro.gain.setValueAtTime(0.9, ctx.currentTime + duracionTotal - 0.35);
+        gainMaestro.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duracionTotal);
 
-        const osc2 = ctx.createOscillator();
-        const gain2 = ctx.createGain();
-        osc2.connect(gain2);
-        gain2.connect(ctx.destination);
-        osc2.type = 'sine';
-        osc2.frequency.setValueAtTime(220, ctx.currentTime + 0.22);
-        gain2.gain.setValueAtTime(1.0, ctx.currentTime + 0.22);
-        gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.37);
-        osc2.start(ctx.currentTime + 0.22);
-        osc2.stop(ctx.currentTime + 0.37);
+        frecuencias.forEach(function (freq) {
+          const osc = ctx.createOscillator();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          osc.frequency.linearRampToValueAtTime(freq - 8, ctx.currentTime + duracionTotal);
+          osc.connect(gainMaestro);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + duracionTotal + 0.05);
+        });
+        return Math.round(duracionTotal * 1000) + 80;
       }
     } catch (e) {
-      // Si el navegador bloquea el audio (por ejemplo, antes de una interacción del usuario), se ignora
-      // silenciosamente y el sistema sigue funcionando normalmente solo con la vibración y el texto en pantalla.
+      return 0;
     }
   }
-
+  // Devuelve la duración del sonido reproducido (ms), para que quien llame pueda pausar
+  // brevemente la lectura de nuevos QR hasta que el sonido termine de escucharse completo.
   function mostrarResultado(resultado) {
     const cont = document.getElementById('resultadoEscaneo');
     cont.classList.remove('oculto');
-    reproducirSonido(resultado.success);
+    const duracionSonido = reproducirSonido(resultado.success);
     if (resultado.success) {
       contadorServidos++;
       actualizarContador();
@@ -349,7 +362,8 @@
       cont.textContent = '✘ ' + resultado.mensaje;
       if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
     }
-    setTimeout(function () { cont.classList.add('oculto'); }, 3000);
+    setTimeout(function () { cont.classList.add('oculto'); }, Math.max(3000, duracionSonido));
+    return duracionSonido;
   }
 
   function reiniciarFlujo() {
