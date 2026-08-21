@@ -58,6 +58,24 @@
     .btn-grande:disabled { background: #b7c3d0; }
 
     #lector { width: 100%; border-radius: 12px; overflow: hidden; }
+    .contenedor-lector { position: relative; }
+    .barra-escaneo {
+      position: absolute;
+      left: 6%;
+      width: 88%;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, var(--verde), transparent);
+      box-shadow: 0 0 8px var(--verde);
+      top: 10%;
+      animation: barridoEscaneo 1.6s ease-in-out infinite;
+      pointer-events: none;
+      z-index: 5;
+    }
+    @keyframes barridoEscaneo {
+      0%   { top: 8%; }
+      50%  { top: 90%; }
+      100% { top: 8%; }
+    }
 
     .contador {
       text-align: center; background: var(--gris-claro); border-radius: 10px; padding: 10px;
@@ -114,7 +132,10 @@
     <div class="contador" id="contadorServidos">0 servidos</div>
     <div id="resultadoEscaneo" class="oculto"></div>
     <div class="tarjeta" style="padding:8px;">
-      <div id="lector"></div>
+      <div class="contenedor-lector">
+        <div id="lector"></div>
+        <div class="barra-escaneo" id="barraEscaneo" style="display:none;"></div>
+      </div>
     </div>
     <div class="btn-cambiar" onclick="reiniciarFlujo()">Cambiar tipo de servicio / comedor</div>
   </div>
@@ -215,6 +236,7 @@
           return;
         }
         document.getElementById('lector').innerHTML = '';
+        document.getElementById('barraEscaneo').style.display = 'block';
         escanerActivo = new Html5Qrcode('lector');
 
         const camaraTrasera = camaras.find(function (c) {
@@ -222,7 +244,14 @@
         });
         const idCamara = camaraTrasera ? camaraTrasera.id : camaras[camaras.length - 1].id;
 
-        const config = { fps: 10, qrbox: 240 };
+        const config = {
+          fps: 15,
+          qrbox: 220,
+          videoConstraints: {
+            facingMode: 'environment',
+            advanced: [{ focusMode: 'continuous' }]
+          }
+        };
 
         escanerActivo.start(idCamara, config, onEscaneoExitoso)
           .catch(function (err) {
@@ -236,6 +265,7 @@
   }
 
   function mostrarErrorCamara(err) {
+    document.getElementById('barraEscaneo').style.display = 'none';
     const nombre = (err && err.name) || 'Desconocido';
     const mensaje = (err && err.message) || String(err);
     const constraint = (err && err.constraint) ? ('<br>Restricción: ' + err.constraint) : '';
@@ -275,14 +305,14 @@
       if (exito) {
         // Sonido corto y agudo (una sola nota) para VALIDADO
         osc.frequency.setValueAtTime(1046, ctx.currentTime); // Do agudo
-        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.setValueAtTime(1.0, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
         osc.start(ctx.currentTime);
         osc.stop(ctx.currentTime + 0.18);
       } else {
         // Dos tonos graves y cortos (buzz doble) para RECHAZADO
         osc.frequency.setValueAtTime(220, ctx.currentTime);
-        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.setValueAtTime(1.0, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
         osc.start(ctx.currentTime);
         osc.stop(ctx.currentTime + 0.15);
@@ -293,7 +323,7 @@
         gain2.connect(ctx.destination);
         osc2.type = 'sine';
         osc2.frequency.setValueAtTime(220, ctx.currentTime + 0.22);
-        gain2.gain.setValueAtTime(0.25, ctx.currentTime + 0.22);
+        gain2.gain.setValueAtTime(1.0, ctx.currentTime + 0.22);
         gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.37);
         osc2.start(ctx.currentTime + 0.22);
         osc2.stop(ctx.currentTime + 0.37);
@@ -324,6 +354,7 @@
 
   function reiniciarFlujo() {
     if (escanerActivo) { escanerActivo.stop().catch(function () {}); }
+    document.getElementById('barraEscaneo').style.display = 'none';
     document.getElementById('pasoEscaner').classList.add('oculto');
     document.getElementById('pasoTipo').classList.remove('oculto');
   }
