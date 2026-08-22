@@ -59,6 +59,22 @@
 
     #lector { width: 100%; border-radius: 12px; overflow: hidden; }
     .contenedor-lector { position: relative; }
+
+    .marco-qr {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: min(220px, 65vw);
+      aspect-ratio: 1 / 1;
+      border: 3px solid var(--verde);
+      border-radius: 16px;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 6;
+      display: none; /* se muestra junto con el video real, ver JS */
+    }
+
     .barra-escaneo {
       position: absolute;
       left: 6%;
@@ -69,7 +85,6 @@
       top: 10%;
       animation: barridoEscaneo 1.6s ease-in-out infinite;
       pointer-events: none;
-      z-index: 5;
     }
     @keyframes barridoEscaneo {
       0%   { top: 8%; }
@@ -135,7 +150,9 @@
     <div class="tarjeta" style="padding:8px;">
       <div class="contenedor-lector">
         <div id="lector"></div>
-        <div class="barra-escaneo" id="barraEscaneo" style="display:none;"></div>
+        <div class="marco-qr" id="marcoQr">
+          <div class="barra-escaneo" id="barraEscaneo"></div>
+        </div>
       </div>
     </div>
     <div class="btn-cambiar" onclick="reiniciarFlujo()">Cambiar tipo de servicio / comedor</div>
@@ -272,7 +289,7 @@
           return;
         }
         document.getElementById('lector').innerHTML = '';
-        document.getElementById('barraEscaneo').style.display = 'block';
+        document.getElementById('marcoQr').style.display = 'block';
 
         // Fase 1 de optimización: formatsToSupport / useBarCodeDetectorIfSupported se pasan
         // en el constructor de Html5Qrcode (no en start()), con respaldo seguro si algo fallara.
@@ -316,7 +333,7 @@
   }
 
   function mostrarErrorCamara(err) {
-    document.getElementById('barraEscaneo').style.display = 'none';
+    document.getElementById('marcoQr').style.display = 'none';
     const nombre = (err && err.name) || 'Desconocido';
     const mensaje = (err && err.message) || String(err);
     const constraint = (err && err.constraint) ? ('<br>Restricción: ' + err.constraint) : '';
@@ -462,7 +479,7 @@
   function reiniciarFlujo() {
     if (escanerActivo) { escanerActivo.stop().catch(function () {}); }
     tListoParaEscanear = null;
-    document.getElementById('barraEscaneo').style.display = 'none';
+    document.getElementById('marcoQr').style.display = 'none';
     document.getElementById('pasoEscaner').classList.add('oculto');
     document.getElementById('pasoTipo').classList.remove('oculto');
   }
