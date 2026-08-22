@@ -160,6 +160,9 @@
   let audioListo = false; // confirma que el desbloqueo de audio ya se completó de verdad (necesario en Chrome/Android)
   const PAUSA_MS_OK = 700;    // pausa fija tras un escaneo válido, independiente de si el sonido suena o no
   const PAUSA_MS_ERROR = 1000; // pausa fija tras un escaneo rechazado, independiente de si el sonido suena o no
+  let ultimoQrProcesado = null;
+  let ultimoQrProcesadoHasta = 0;
+  const BLOQUEO_MISMO_QR_MS = 4000;
 
   // Se llama SOLO desde el toque directo del botón ALMUERZO/CENA (requisito de Android para autorizar audio).
   function desbloquearAudio_() {
@@ -327,6 +330,16 @@
   }
 
   function onEscaneoExitoso(textoDecodificado) {
+    const qrActual = String(textoDecodificado || '').trim();
+
+    // Anti-relectura: ignora silenciosamente el mismo QR si ya se procesó hace pocos segundos.
+    // No toca procesandoEscaneo, no llama al servidor, no suena, no cambia el contador ni la pantalla.
+    const ahora = Date.now();
+    if (ultimoQrProcesado === qrActual && ahora < ultimoQrProcesadoHasta) {
+      console.log('QR repetido ignorado:', qrActual);
+      return;
+    }
+
     if (procesandoEscaneo) return;
     procesandoEscaneo = true;
 
@@ -334,8 +347,13 @@
     const tDeteccion = tListoParaEscanear ? (performance.now() - tListoParaEscanear) : null;
     const tInicioServidor = performance.now();
 
-    llamarApi({ accion: 'escanear', uuid: textoDecodificado, comedor: comedorActual, tipo: tipoActual, clave: claveActual })
+    llamarApi({ accion: 'escanear', uuid: qrActual, comedor: comedorActual, tipo: tipoActual, clave: claveActual })
       .then(function (resultado) {
+        // Se registra como "último QR procesado" SOLO cuando el servidor respondió de verdad
+        // (éxito o rechazo funcional), nunca antes. Esto habilita la ventana de 4 segundos.
+        ultimoQrProcesado = qrActual;
+        ultimoQrProcesadoHasta = Date.now() + BLOQUEO_MISMO_QR_MS;
+
         const tServidor = performance.now() - tInicioServidor;
         mostrarTiemposDebug(tDeteccion, tServidor, resultado.debug);
         mostrarResultado(resultado);
@@ -345,8 +363,10 @@
         setTimeout(function () { procesandoEscaneo = false; tListoParaEscanear = performance.now(); }, pausa);
       })
       .catch(function () {
+        // Error de conexión: NO se registra como "último QR procesado", para permitir reintentar
+        // de inmediato apenas vuelva el internet, sin esperar el bloqueo de 4 segundos.
         const tServidor = performance.now() - tInicioServidor;
-        mostrarTiemposDebug(tDeteccion, tServidor);
+        mostrarTiemposDebug(tDeteccion, tServidor, null);
         mostrarResultado({ success: false, mensaje: 'Error de conexión. Verifique su internet e intente de nuevo.' });
         setTimeout(function () { procesandoEscaneo = false; tListoParaEscanear = performance.now(); }, PAUSA_MS_ERROR);
       });
