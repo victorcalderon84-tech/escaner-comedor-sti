@@ -147,6 +147,11 @@
     <div class="contador" id="contadorServidos">0 servidos</div>
     <div id="resultadoEscaneo" class="oculto"></div>
     <div id="debugTiempos" style="text-align:center; font-size:12px; color:var(--gris); margin-bottom:8px;"></div>
+    <div id="debugExtra" class="oculto" style="text-align:center; font-size:11px; color:var(--gris); margin-bottom:6px;"></div>
+    <div id="bloquePruebaQr" class="oculto" style="text-align:center; margin-bottom:8px;">
+      <button type="button" class="btn-mini" onclick="iniciarPruebaQr()">INICIAR PRUEBA DE LECTURA</button>
+      <div id="resultadoPruebaQr" style="font-size:12px; color:var(--azul-oscuro); margin-top:4px;"></div>
+    </div>
     <div class="tarjeta" style="padding:8px;">
       <div class="contenedor-lector">
         <div id="lector"></div>
@@ -180,6 +185,19 @@
   let ultimoQrProcesado = null;
   let ultimoQrProcesadoHasta = 0;
   const BLOQUEO_MISMO_QR_MS = 4000;
+
+  // --- FASE II: perfiles de prueba (solo activos con ?debug=1 en la URL, invisibles para el usuario normal) ---
+  const DEBUG_MODE = parametrosUrl.get('debug') === '1';
+  const PERFIL_ACTUAL = DEBUG_MODE ? (parametrosUrl.get('perfilqr') || 'A') : 'A';
+  const PERFILES_QR = {
+    A: { qrbox: 220, disableFlip: false, estrategiaCamara: 'actual' },     // comportamiento actual, sin cambios (baseline)
+    B: { qrbox: 220, disableFlip: false, estrategiaCamara: 'corregida' },  // elimina el conflicto idCamara/videoConstraints
+    C: { qrbox: 220, disableFlip: true,  estrategiaCamara: 'corregida' },  // igual que B + disableFlip
+    D: { qrbox: 260, disableFlip: false, estrategiaCamara: 'corregida' },  // igual que B + qrbox más grande
+    E: { qrbox: 280, disableFlip: false, estrategiaCamara: 'corregida' }
+  };
+  function obtenerPerfilQr_() { return PERFILES_QR[PERFIL_ACTUAL] || PERFILES_QR.A; }
+  let tInicioPruebaQr = null; // "Modo prueba QR": marca de tiempo del botón "INICIAR PRUEBA DE LECTURA" (solo debug)
 
   // Se llama SOLO desde el toque directo del botón ALMUERZO/CENA (requisito de Android para autorizar audio).
   function desbloquearAudio_() {
@@ -271,7 +289,18 @@
     contadorServidos = 0;
     actualizarContador();
     desbloquearAudio_(); // desbloquea el audio aquí mismo, dentro del toque directo del usuario (requisito de Android)
+    if (DEBUG_MODE) {
+      document.getElementById('debugExtra').classList.remove('oculto');
+      document.getElementById('bloquePruebaQr').classList.remove('oculto');
+      console.log('BarcodeDetector disponible en este navegador:', ('BarcodeDetector' in window));
+      console.log('Perfil QR activo:', PERFIL_ACTUAL, obtenerPerfilQr_());
+    }
     iniciarCamara();
+  }
+
+  function iniciarPruebaQr() {
+    tInicioPruebaQr = performance.now();
+    document.getElementById('resultadoPruebaQr').textContent = 'Presente el QR ahora...';
   }
 
   function actualizarContador() {
@@ -279,8 +308,17 @@
       contadorServidos + ' servido(s) — ' + tipoActual + ' — COMEDOR ' + comedorActual;
   }
 
+  function ajustarTamanoMarco_(tamanoQrbox) {
+    const tam = Math.min(tamanoQrbox, Math.round(window.innerWidth * 0.65));
+    const marco = document.getElementById('marcoQr');
+    marco.style.width = tam + 'px';
+    marco.style.height = tam + 'px';
+  }
+
   function iniciarCamara() {
     document.getElementById('lector').innerHTML = '<p style="text-align:center; padding:20px; color:var(--gris);">Solicitando acceso a la cámara...</p>';
+    const perfil = obtenerPerfilQr_();
+    ajustarTamanoMarco_(perfil.qrbox); // el marco visual sigue siempre al tamaño real de qrbox del perfil activo
 
     Html5Qrcode.getCameras()
       .then(function (camaras) {
@@ -307,29 +345,77 @@
           return /back|trasera|rear|environment/i.test(c.label);
         });
         const idCamara = camaraTrasera ? camaraTrasera.id : camaras[camaras.length - 1].id;
+        const esCamaraTraseraConfirmada = !!camaraTrasera;
 
-        const config = {
-          fps: 15,
-          qrbox: 220,
-          videoConstraints: {
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }, // resolución más liviana: menos datos por fotograma para analizar, sin perder nitidez suficiente para leer el QR.
-            advanced: [{ focusMode: 'continuous' }]
-          }
-        };
+        // Fase II: la estrategia 'actual' reproduce exactamente el comportamiento previo (baseline,
+        // incluye el conflicto conocido idCamara/videoConstraints). La 'corregida' elimina ese
+        // conflicto quitando el facingMode duplicado de videoConstraints cuando ya se seleccionó
+        // una cámara específica por ID.
+        const videoConstraints = (perfil.estrategiaCamara === 'actual')
+          ? {
+              facingMode: 'environment',
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              advanced: [{ focusMode: 'continuous' }]
+            }
+          : {
+              width: { ideal: 1280 },
+              height: { ideal: 720 }, // resolución más liviana: menos datos por fotograma para analizar, sin perder nitidez suficiente para leer el QR.
+              advanced: [{ focusMode: 'continuous' }]
+            };
+
+        const config = { fps: 15, qrbox: perfil.qrbox, videoConstraints: videoConstraints };
+        if (perfil.disableFlip && esCamaraTraseraConfirmada) {
+          config.disableFlip = true;
+        }
 
         escanerActivo.start(idCamara, config, onEscaneoExitoso)
-          .then(function () { tListoParaEscanear = performance.now(); })
+          .then(function () { tListoParaEscanear = performance.now(); diagnosticarCamaraActiva_(); })
           .catch(function (err) {
             escanerActivo.start({ facingMode: 'environment' }, config, onEscaneoExitoso)
-              .then(function () { tListoParaEscanear = performance.now(); })
+              .then(function () { tListoParaEscanear = performance.now(); diagnosticarCamaraActiva_(); })
               .catch(function (err2) { mostrarErrorCamara(err2); });
           });
       })
       .catch(function (err) {
         mostrarErrorCamara(err);
       });
+  }
+
+  // Diagnóstico de la cámara realmente en uso (solo consola, nunca bloquea ni detiene el escáner
+  // si algo no está disponible — Android e iPhone reportan capacidades distintas).
+  function diagnosticarCamaraActiva_() {
+    if (!DEBUG_MODE || !escanerActivo) return;
+
+    let capacidades = null;
+    try {
+      if (typeof escanerActivo.getRunningTrackCapabilities === 'function') {
+        capacidades = escanerActivo.getRunningTrackCapabilities();
+        console.log('Capacidades de la cámara activa:', capacidades);
+      }
+    } catch (e) { console.log('No se pudieron leer las capacidades de la cámara:', e.message); }
+
+    try {
+      if (typeof escanerActivo.getRunningTrackSettings === 'function') {
+        const ajustes = escanerActivo.getRunningTrackSettings();
+        console.log('Ajustes reales de la cámara — resolución:', ajustes.width + 'x' + ajustes.height,
+          '| frameRate:', ajustes.frameRate, '| facingMode:', ajustes.facingMode,
+          '| focusMode:', ajustes.focusMode, '| zoom:', ajustes.zoom,
+          '| deviceId disponible:', !!ajustes.deviceId);
+      }
+    } catch (e) { console.log('No se pudieron leer los ajustes reales de la cámara:', e.message); }
+
+    // Refuerzo de foco continuo: si la capacidad está disponible, se reaplica explícitamente
+    // después de iniciar (verificación adicional a la restricción "advanced" inicial).
+    try {
+      if (capacidades && capacidades.focusMode && capacidades.focusMode.indexOf &&
+          capacidades.focusMode.indexOf('continuous') !== -1 &&
+          typeof escanerActivo.applyVideoConstraints === 'function') {
+        escanerActivo.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] })
+          .then(function () { console.log('focusMode continuous reforzado correctamente tras iniciar.'); })
+          .catch(function (e) { console.log('No se pudo reforzar focusMode continuous:', e.message); });
+      }
+    } catch (e) { /* no crítico */ }
   }
 
   function mostrarErrorCamara(err) {
@@ -346,8 +432,22 @@
       '</div>';
   }
 
-  function onEscaneoExitoso(textoDecodificado) {
+  function onEscaneoExitoso(textoDecodificado, decodeResult) {
     const qrActual = String(textoDecodificado || '').trim();
+
+    // "Modo prueba QR" (solo debug): mide desde el botón "INICIAR PRUEBA DE LECTURA" hasta esta
+    // detección real de la cámara. No afecta servidor, registro ni anti-relectura — solo mide.
+    if (DEBUG_MODE && tInicioPruebaQr !== null) {
+      const tiempoPruebaQr = performance.now() - tInicioPruebaQr;
+      document.getElementById('resultadoPruebaQr').textContent = 'PRUEBA QR: ' + Math.round(tiempoPruebaQr) + ' ms';
+      tInicioPruebaQr = null;
+    }
+    if (DEBUG_MODE) {
+      try {
+        const decoderName = decodeResult && decodeResult.result && decodeResult.result.debugData && decodeResult.result.debugData.decoderName;
+        console.log('Motor utilizado para esta lectura (si la librería lo informa):', decoderName || '(no informado)');
+      } catch (e) { /* no crítico */ }
+    }
 
     // Anti-relectura: ignora silenciosamente el mismo QR si ya se procesó hace pocos segundos.
     // No toca procesandoEscaneo, no llama al servidor, no suena, no cambia el contador ni la pantalla.
@@ -396,7 +496,7 @@
     const detTexto = tDeteccion !== null ? (tDeteccion / 1000).toFixed(2) + 's' : '—';
     const servTexto = (tServidor / 1000).toFixed(2) + 's';
     const totalTexto = tDeteccion !== null ? ((tDeteccion + tServidor) / 1000).toFixed(2) + 's' : servTexto;
-    let texto = '⏱ Detección: ' + detTexto + '  |  Servidor: ' + servTexto + '  |  Total: ' + totalTexto;
+    let texto = '⏱ Espera hasta QR: ' + detTexto + '  |  Servidor: ' + servTexto + '  |  Total: ' + totalTexto;
     if (debugBackend) {
       texto += ' — [clave:' + debugBackend.claveMs + 'ms uuid:' + debugBackend.uuidMs + 'ms trab:' + debugBackend.trabajadorMs +
         'ms reg:' + debugBackend.registrosMs + 'ms lock:' + debugBackend.esperaLockMs + 'ms serv:' + debugBackend.servidosMs +
